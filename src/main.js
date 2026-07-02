@@ -1,6 +1,5 @@
 import Phaser from 'phaser';
 import { GAME_WIDTH, GAME_HEIGHT, COLORS } from './config/constants.js';
-import BootScene from './scenes/BootScene.js';
 import PreloadScene from './scenes/PreloadScene.js';
 import MenuScene from './scenes/MenuScene.js';
 import LobbyScene from './scenes/LobbyScene.js';
@@ -19,7 +18,6 @@ const config = {
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
   scene: [
-    BootScene,
     PreloadScene,
     MenuScene,
     LobbyScene,

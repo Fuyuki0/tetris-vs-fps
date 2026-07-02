@@ -13,9 +13,11 @@ export default class PreloadScene extends Phaser.Scene {
     // Title
     this.add.text(width / 2, height / 2 - 60, 'TETRIS VS FPS', {
       fontFamily: 'Orbitron',
-      fontSize: '36px',
+      fontSize: '42px',
       fontStyle: 'bold',
       color: '#00d4ff',
+      stroke: '#001a33',
+      strokeThickness: 4,
     }).setOrigin(0.5);
 
     // Loading bar background
