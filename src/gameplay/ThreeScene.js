@@ -585,7 +585,7 @@ export default class ThreeScene {
   _buildFloorGrid() {
     // Playable area is X: -15 to 40 (width 55), Z: 2 to 160 (depth 158). Center is (12.5, 81)
     const gridHelper = new THREE.GridHelper(160, 160, 0x00d4ff, 0x0a1520);
-    gridHelper.position.set(12.5, -0.6, 81);
+    gridHelper.position.set(4.5, -0.6, 81);
     gridHelper.material.transparent = true;
     gridHelper.material.opacity = 0.25;
     this.scene.add(gridHelper);
@@ -596,7 +596,7 @@ export default class ThreeScene {
     const borderMat = new THREE.LineBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.5 });
     const borderLine = new THREE.LineSegments(borderEdges, borderMat);
     borderLine.rotation.x = -Math.PI / 2;
-    borderLine.position.set(12.5, -0.59, 81); // Slightly above grid
+    borderLine.position.set(4.5, -0.59, 81); // Slightly above grid
     this.scene.add(borderLine);
 
     // Faint highlight plane for the playable floor
@@ -604,7 +604,7 @@ export default class ThreeScene {
     const planeMat = new THREE.MeshBasicMaterial({ color: 0x00d4ff, transparent: true, opacity: 0.04, side: THREE.DoubleSide });
     const floorPlane = new THREE.Mesh(planeGeo, planeMat);
     floorPlane.rotation.x = -Math.PI / 2;
-    floorPlane.position.set(12.5, -0.61, 81);
+    floorPlane.position.set(4.5, -0.61, 81);
     this.scene.add(floorPlane);
   }
 
@@ -1131,8 +1131,8 @@ export default class ThreeScene {
       }
 
       // Clamp position (X and Z only, Y is handled by crouch)
-      // Expanded boundaries for freer movement: X from -15 to 25, Z from 2 to 80 (added more Z axis!)
-      this.camera.position.x = THREE.MathUtils.clamp(this.camera.position.x, -15, 40);
+      // Expanded boundaries for freer movement: X from -22.5 to 32.5, Z from 2 to 160 (added more Z axis!)
+      this.camera.position.x = THREE.MathUtils.clamp(this.camera.position.x, -22.5, 32.5);
       this.camera.position.z = THREE.MathUtils.clamp(this.camera.position.z, 2, 160);
 
       // ─── FPS Mouse look ─────
