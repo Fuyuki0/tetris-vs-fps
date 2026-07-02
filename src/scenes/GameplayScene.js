@@ -7,7 +7,8 @@ import GunnerOverlay from '../gameplay/gunner/GunnerOverlay.js';
 import WeaponSystem from '../gameplay/gunner/WeaponSystem.js';
 import GameBridge from '../gameplay/bridge/GameBridge.js';
 import eventBus from '../gameplay/bridge/EventBus.js';
-import DoomRenderer from '../gameplay/gunner/DoomRenderer.js';
+import ThreeScene from '../gameplay/ThreeScene.js';
+import * as THREE from 'three';
 
 // Layout constants
 const BOARD_W = TETRIS_COLS * CELL_SIZE; // 300
@@ -23,17 +24,28 @@ export default class GameplayScene extends Phaser.Scene {
   init(data) { this.playerRole = data.role || 'tetris'; }
 
   create() {
-    if (this.playerRole !== 'gunner') {
-      this.cameras.main.setBackgroundColor(COLORS.BG_DARK);
-    } else {
-      this.cameras.main.setBackgroundColor('rgba(0,0,0,0)');
-    }
+    // Phaser canvas is transparent — Three.js renders the 3D world behind it
+    this.cameras.main.setBackgroundColor('rgba(0,0,0,0)');
     this.cameras.main.fadeIn(500);
     eventBus.removeAll();
 
+    // Clean up Three.js on scene restart/shutdown
+    this.events.once('shutdown', () => {
+      // Release mouse if locked
+      if (document.pointerLockElement) {
+        document.exitPointerLock();
+      }
+      
+      if (this.threeScene) {
+        this.threeScene.dispose();
+        this.threeScene = null;
+      }
+    });
+
     this.tetrisBoard = new TetrisBoard();
     this.bridge = new GameBridge(this);
-    this.tetrisRenderer = new TetrisRenderer(this);
+    // Force 3D mode for both players so the center is clean
+    this.tetrisRenderer = new TetrisRenderer(this, true);
     this.gunnerOverlay = new GunnerOverlay(this);
     this.weaponSystem = new WeaponSystem(this);
 
@@ -41,53 +53,63 @@ export default class GameplayScene extends Phaser.Scene {
     this.holdPos = { x: LP_X + LP_W / 2, y: ARENA_Y + 55 };
     this.nextQueueX = RP_X + RP_W / 2;
     this.nextStartY = ARENA_Y + 50;
-    this.nextSpacing = 85;
+    this.nextSpacing = 65;
 
     // Controls
     if (this.playerRole === 'tetris') {
       this.tetrisController = new TetrisController(this, this.tetrisBoard);
 
       // Ability keybinds — use addKey for reliability
-      const keyQ = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.Q);
-      const keyE = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
+      const keyA = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A);
+      const keyS = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S);
+      const keyD = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D);
       const keyF = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F);
-      const keyG = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.G);
 
-      keyQ.on('down', () => {
+      keyA.on('down', () => {
         if (this.tetrisBoard.activateIronBody()) this.flashAbility('Iron Body ACTIVE! (6s)', '#ffaa00');
         else this.flashAbility('Iron Body on cooldown', '#ff4444');
       });
-      keyE.on('down', () => {
+      keyS.on('down', () => {
         if (this.tetrisBoard.activateShield()) this.flashAbility('Shield Aura ACTIVE!', '#00d4ff');
         else this.flashAbility('Shield on cooldown', '#ff4444');
       });
-      keyF.on('down', () => {
+      keyD.on('down', () => {
         if (this.tetrisBoard.activateRepair()) this.flashAbility('Blocks Repaired! +30 HP', '#00ff88');
         else this.flashAbility('Repair on cooldown', '#ff4444');
       });
-      keyG.on('down', () => {
+      keyF.on('down', () => {
         if (this.tetrisBoard.activateSeismicPurge()) { this.flashAbility('SEISMIC PURGE!', '#ff8800'); this.cameras.main.shake(400, 0.02); }
         else this.flashAbility('Seismic Purge on cooldown', '#ff4444');
       });
     }
 
-    // Both roles see gunner crosshair + weapon
-    this.gunnerOverlay.setVisible(true);
+    // Only gunner sees their crosshair + weapon
+    this.gunnerOverlay.setVisible(this.playerRole === 'gunner');
+
+    // Initialize Three.js 3D scene
+    this.threeScene = new ThreeScene(this, this.playerRole);
+    
     if (this.playerRole === 'gunner') {
       // Hide OS cursor, use game crosshair
       this.game.canvas.style.cursor = 'none';
       
-      // Hide flat 2D board, enable Doom 3D renderer
-      this.tetrisRenderer.setVisible(false);
-      this.doomRenderer = new DoomRenderer(this);
-      
       this.input.on('pointermove', (p) => {
-        this.gunnerOverlay.updateCrosshair(p.x, p.y);
+        if (this.input.mouse.locked && this.threeScene) {
+          this.threeScene.applyMouseMovement(p.movementX, p.movementY);
+        }
       });
       
       this.input.on('pointerdown', (p) => {
+        if (!this.input.mouse.locked) {
+          this.input.mouse.requestPointerLock();
+          if (this._lockHintText) {
+            this._lockHintText.destroy();
+            this._lockHintText = null;
+          }
+          return;
+        }
         this.isFiringHeld = true;
-        this.handleShot(this.gunnerOverlay.crosshairX, this.gunnerOverlay.crosshairY);
+        this.handleShot();
       });
       
       this.input.on('pointerup', () => { this.isFiringHeld = false; });
@@ -113,16 +135,86 @@ export default class GameplayScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-ESC', () => this.togglePause());
     this.isPaused = false;
     this.matchTime = 0;
+    this.timeScale = 1.0;
+    this.isGameOverState = false;
+
+    // Exit button
+    const exitBtn = this.add.text(20, 20, 'EXIT GAME', { fontFamily: 'Orbitron', fontSize: '14px', color: '#ff4444', fontStyle: 'bold' })
+      .setInteractive({ useHandCursor: true })
+      .setDepth(100)
+      .on('pointerdown', () => {
+        if (this.playerRole === 'gunner' && this.input.mouse.locked) this.input.mouse.releasePointerLock();
+        eventBus.emit(EVENTS.GAME_OVER, { winner: 'quit' });
+      })
+      .on('pointerover', () => exitBtn.setColor('#ffaaaa'))
+      .on('pointerout', () => exitBtn.setColor('#ff4444'));
+
+    // Prevent default browser actions for Ctrl + WASD to allow crouching and moving
+    this._preventShortcuts = (e) => {
+      if (e.ctrlKey && ['w', 'a', 's', 'd'].includes(e.key.toLowerCase())) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('keydown', this._preventShortcuts, { passive: false });
+
+    // Clean up when scene is destroyed
+    this.events.on('shutdown', () => {
+      window.removeEventListener('keydown', this._preventShortcuts);
+      if (this._wheelListener) window.removeEventListener('wheel', this._wheelListener);
+      if (this.htmlTimer) this.htmlTimer.style.display = 'none';
+    });
 
     // Utility cooldowns (both roles track, gunner uses)
     this.utilityCooldowns = { grenade: 0, flashbang: 0, smoke: 0 };
     this._smokeOverlay = null;
     this._smokeTimer = 0;
     if (this.playerRole === 'gunner') {
-      this.input.keyboard.on('keydown-FOUR', () => this.useGrenade());
-      this.input.keyboard.on('keydown-FIVE', () => this.useFlashbang());
-      this.input.keyboard.on('keydown-SIX', () => this.useSmoke());
+      // Weapon Hotkeys
+      this.input.keyboard.on('keydown-ONE', () => this.weaponSystem.switchWeapon('knife'));
+      this.input.keyboard.on('keydown-TWO', () => this.weaponSystem.switchWeapon('deagle'));
+      this.input.keyboard.on('keydown-THREE', () => this.weaponSystem.switchWeapon('ak47'));
+      this.input.keyboard.on('keydown-FOUR', () => this.weaponSystem.switchWeapon('grenade'));
+      this.input.keyboard.on('keydown-FIVE', () => this.weaponSystem.switchWeapon('flashbang'));
+      this.input.keyboard.on('keydown-SIX', () => this.weaponSystem.switchWeapon('smoke'));
+
+      // Debug Hotkeys for Weapon Cycling
+      this.input.keyboard.on('keydown-Q', () => this.weaponSystem.previousWeapon());
+      this.input.keyboard.on('keydown-E', () => this.weaponSystem.nextWeapon());
+
+      this._wheelListener = (e) => {
+        // Pure unthrottled wheel event to guarantee we don't drop any inputs
+        if (e.deltaY > 0) {
+          this.weaponSystem.nextWeapon();
+        } else if (e.deltaY < 0) {
+          this.weaponSystem.previousWeapon();
+        }
+      };
+      // Passive: false ensures the browser can still cancel it if we needed to, but we don't.
+      // We bind directly to the window to ensure NOTHING blocks the scroll input.
+      window.addEventListener('wheel', this._wheelListener, { passive: true });
     }
+
+    // Attempt to auto-lock the pointer for the gunner if the browser allows it (from previous click)
+    if (this.playerRole === 'gunner') {
+      this.time.delayedCall(100, () => {
+        if (!this.input.mouse.locked) {
+          try {
+            this.input.mouse.requestPointerLock();
+          } catch (e) {}
+        }
+      });
+      
+      // Hint text if lock fails
+      this._lockHintText = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 50, 'CLICK SCREEN TO LOCK AIM', {
+        fontFamily: 'Orbitron',
+        fontSize: '18px',
+        color: '#ffffff',
+        stroke: '#000000',
+        strokeThickness: 3
+      }).setOrigin(0.5).setDepth(100);
+      this._lockHintText.setVisible(!this.input.mouse.locked);
+    }
+
   }
 
   /* ════════════════════ HUD ════════════════════ */
@@ -132,101 +224,34 @@ export default class GameplayScene extends Phaser.Scene {
     const font = (sz, c='#667788') => ({ fontFamily:'Orbitron', fontSize:sz, color:c });
     const fontI = (sz, c='#445566') => ({ fontFamily:'Inter', fontSize:sz, color:c });
 
-    // ── Left Panel ──
-    const lpG = this.add.graphics().setDepth(10);
-    lpG.fillStyle(0x0a0e1a, 0.85).fillRoundedRect(LP_X, 10, LP_W, GAME_HEIGHT - 20, 8);
-    lpG.lineStyle(1, COLORS.ACCENT_BLUE, 0.2).strokeRoundedRect(LP_X, 10, LP_W, GAME_HEIGHT - 20, 8);
-
-    // HOLD block
-    this.add.text(this.holdPos.x, ARENA_Y + 10, 'HOLD', font('11px')).setOrigin(0.5,0).setDepth(11);
-
-    // Score/Level/Lines below hold
-    let y = ARENA_Y + 140;
-    this.add.text(LP_X+15, y, 'SCORE', font('9px','#556677')).setDepth(11);
-    this.scoreText = this.add.text(LP_X+15, y+14, '0', font('18px','#00d4ff')).setDepth(11);
-    y += 48;
-    this.add.text(LP_X+15, y, 'LEVEL', font('9px','#556677')).setDepth(11);
-    this.levelText = this.add.text(LP_X+15, y+14, '1', font('18px','#ffd700')).setDepth(11);
-    y += 48;
-    this.add.text(LP_X+15, y, 'LINES', font('9px','#556677')).setDepth(11);
-    this.linesText = this.add.text(LP_X+15, y+14, '0', font('18px','#00ff88')).setDepth(11);
-
-    // Abilities (tetris only)
     this.abilityTexts = [];
     this.chargeText = null;
-    if (isTetris) {
-      y += 55;
-      this.add.text(LP_X+15, y, 'ABILITIES', font('9px','#556677')).setDepth(11);
-      y += 18;
-      const abils = [
-        { key:'Q', name:'Iron Body', color:'#ffaa00' },
-        { key:'E', name:'Shield', color:'#00d4ff' },
-        { key:'F', name:'Repair', color:'#00ff88' },
-        { key:'G', name:'Seismic Purge', color:'#ff8800' },
-      ];
-      abils.forEach(a => {
-        const t = this.add.text(LP_X+15, y, `[${a.key}] ${a.name}`, fontI('11px')).setDepth(11);
-        this.abilityTexts.push({ text: t, key: a.key, name: a.name, activeColor: a.color });
-        y += 24;
-      });
-    }
-
-    // Gunner HP on left panel bottom
-    y = BOARD_BOTTOM - 65;
-    this.add.text(LP_X+15, y, 'GUNNER HP', font('9px')).setDepth(11);
-    this.hpBarBgG = this.add.graphics().setDepth(11);
-    this.hpBarFillG = this.add.graphics().setDepth(12);
-    this.hpBarX = LP_X + 15; this.hpBarY = y + 16; this.hpBarW = LP_W - 30;
-    this.hpBarBgG.fillStyle(0x1a1a2e, 0.8).fillRoundedRect(this.hpBarX, this.hpBarY, this.hpBarW, 14, 4);
-    this.hpText = this.add.text(LP_X + LP_W - 15, y, `${GUNNER_MAX_HP}`, font('9px','#00ff88')).setOrigin(1,0).setDepth(11);
-    this.regenText = this.add.text(LP_X+15, y+35, '', fontI('9px','#00ff88')).setDepth(11);
-    this.updateHPBar(GUNNER_MAX_HP, GUNNER_MAX_HP);
-
-    // ── Right Panel ──
-    const rpG = this.add.graphics().setDepth(10);
-    rpG.fillStyle(0x0a0e1a, 0.85).fillRoundedRect(RP_X, 10, RP_W, GAME_HEIGHT - 20, 8);
-    rpG.lineStyle(1, COLORS.ACCENT_PINK, 0.2).strokeRoundedRect(RP_X, 10, RP_W, GAME_HEIGHT - 20, 8);
-
-    // NEXT label
-    this.add.text(this.nextQueueX, ARENA_Y + 10, 'NEXT', font('11px')).setOrigin(0.5,0).setDepth(11);
-
-    // Weapon slots + status below queue
     this.weaponSlotTexts = {};
-    let wy = ARENA_Y + 480;
+    this._utilTexts = [];
+
+    // Timer (Use HTML overlay so it stays exactly at top even with F11 letterboxing)
+    this.htmlTimer = document.getElementById('global-timer');
+    if (this.htmlTimer) this.htmlTimer.style.display = 'block';
+
+    // Gunner HP on bottom center
+    // (Only show for gunner in 2D UI; Tetris player sees it on 3D Holographic screens)
     if (isGunner) {
-      this.add.text(RP_X+15, wy, 'WEAPONS', font('9px')).setDepth(11);
-      wy += 16;
-      [{ key:'knife', label:'[1] 🔪 Knife' }, { key:'deagle', label:'[2] 🔫 Deagle' }, { key:'ak47', label:'[3] 🔫 AK-47' }].forEach(s => {
-        this.weaponSlotTexts[s.key] = this.add.text(RP_X+15, wy, s.label, fontI('11px','#556677')).setDepth(11);
-        wy += 20;
-      });
-      wy += 10;
-      // Utility slots
-      this.add.text(RP_X+15, wy, 'UTILITIES', font('9px')).setDepth(11);
-      wy += 16;
-      this._utilTexts = [];
-      [{ key:'grenade', num:'4', name:'Grenade', icon:'💣' },
-       { key:'flashbang', num:'5', name:'Flash', icon:'✨' },
-       { key:'smoke', num:'6', name:'Smoke', icon:'💨' }].forEach(u => {
-        const t = this.add.text(RP_X+15, wy, `[${u.num}] ${u.icon} ${u.name} (RDY)`, fontI('11px','#00ff88')).setDepth(11);
-        this._utilTexts.push({ text: t, ...u });
-        wy += 20;
-      });
-      wy += 8;
-    } else {
-      this._utilTexts = [];
+      let y = GAME_HEIGHT - 60;
+      this.add.text(GAME_WIDTH / 2, y, 'HP', font('11px')).setOrigin(0.5,0).setDepth(11);
+      this.hpBarBgG = this.add.graphics().setDepth(11);
+      this.hpBarFillG = this.add.graphics().setDepth(12);
+      this.hpBarX = GAME_WIDTH / 2 - 150; 
+      this.hpBarY = y + 16; 
+      this.hpBarW = 300;
+      this.hpBarBgG.fillStyle(0x1a1a2e, 0.8).fillRoundedRect(this.hpBarX, this.hpBarY, this.hpBarW, 14, 4);
+      this.hpText = this.add.text(this.hpBarX + this.hpBarW + 10, y + 10, `${GUNNER_MAX_HP}`, font('12px', '#00ff88')).setDepth(11);
+      this.regenText = this.add.text(this.hpBarX, y+35, '', fontI('9px','#00ff88')).setDepth(11);
+      this.updateHPBar(GUNNER_MAX_HP, GUNNER_MAX_HP);
     }
-
-    // Status indicators
-    this.add.text(RP_X+15, wy, isTetris ? 'GUNNER STATUS' : 'ENEMY SKILLS', font('9px')).setDepth(11);
-    this.ironIndicator = this.add.text(RP_X+15, wy+16, '', fontI('10px','#aabbcc')).setDepth(11);
-    this.shieldIndicator = this.add.text(RP_X+15, wy+32, '', fontI('10px','#00d4ff')).setDepth(11);
-
-    // Timer
-    this.timerText = this.add.text(GAME_WIDTH/2, 8, '00:00', font('13px','#334455')).setOrigin(0.5,0).setDepth(11);
   }
 
   updateHPBar(current, max, maxRegen = max) {
+    if (!this.hpBarFillG) return;
     this.hpBarFillG.clear();
     const ratio = Math.max(0, current / max);
     const regenRatio = Math.max(0, maxRegen / max);
@@ -236,11 +261,15 @@ export default class GameplayScene extends Phaser.Scene {
     if (lostRatio > 0) {
       const lostW = this.hpBarW * lostRatio;
       const lostX = this.hpBarX + (this.hpBarW * regenRatio);
-      this.hpBarFillG.fillStyle(0x333333, 0.8).fillRoundedRect(lostX, this.hpBarY, lostW, 14, 4);
+      this.hpBarFillG.fillStyle(0x330000, 0.8).fillRoundedRect(lostX, this.hpBarY, lostW, 14, 4);
     }
     
+    // Draw current HP
     const w = this.hpBarW * ratio;
-    this.hpBarFillG.fillStyle(color, 0.9).fillRoundedRect(this.hpBarX, this.hpBarY, Math.max(0, w), 14, 4);
+    const color = this.playerRole === 'tetris' ? 0xff2d55 : (ratio > 0.5 ? 0x00ff88 : ratio > 0.25 ? 0xffd700 : 0xff2d55);
+    if (w > 0) {
+      this.hpBarFillG.fillStyle(color, 1).fillRoundedRect(this.hpBarX, this.hpBarY, w, 14, 4);
+    }
     this.hpBarFillG.fillStyle(color, 0.12).fillRoundedRect(this.hpBarX, this.hpBarY - 2, Math.max(0, w), 18, 4);
     if (this.hpText) {
       this.hpText.setText(`${Math.floor(current)}/${Math.floor(maxRegen)}`);
@@ -249,20 +278,49 @@ export default class GameplayScene extends Phaser.Scene {
   }
 
   /* ════════════════════ SHOOTING ════════════════════ */
-  handleShot(aimX, aimY) {
-    const result = this.weaponSystem.fire();
-    if (!result) return;
-    
-    // Apply visual recoil kick to the 3D camera
-    if (this.doomRenderer) {
-      this.doomRenderer.camera.pitch -= result.recoilOffsetY * 0.001; // physical kick
+  handleShot() {
+    if (this.weaponSystem.isReloading) return;
+
+    // Check if we are throwing a utility
+    if (this.weaponSystem.currentWeapon === 'grenade') {
+      if (this.utilityCooldowns.grenade <= 0) {
+        this.useGrenade();
+        this.weaponSystem.switchWeapon(this.weaponSystem.previousWeapon || 'deagle');
+      }
+      return;
+    } else if (this.weaponSystem.currentWeapon === 'flashbang') {
+      if (this.utilityCooldowns.flashbang <= 0) {
+        this.useFlashbang();
+        this.weaponSystem.switchWeapon(this.weaponSystem.previousWeapon || 'deagle');
+      }
+      return;
+    } else if (this.weaponSystem.currentWeapon === 'smoke') {
+      if (this.utilityCooldowns.smoke <= 0) {
+        this.useSmoke();
+        this.weaponSystem.switchWeapon(this.weaponSystem.previousWeapon || 'deagle');
+      }
+      return;
     }
 
-    // Actual bullet hit location (recoil included)
-    const ex = aimX + result.recoilOffsetX;
-    const ey = aimY + result.recoilOffsetY;
-    
-    this.gunnerOverlay.muzzleFlash(this.weaponSystem.currentWeapon);
+    const result = this.weaponSystem.fire();
+    if (!result) return;
+
+    // Screen coordinates for hit markers (center of screen in FPS mode)
+    let ex = GAME_WIDTH / 2;
+    let ey = GAME_HEIGHT / 2;
+
+    let theta = 0;
+    if (this.weaponSystem.currentWeapon === 'knife') {
+      theta = Math.random() * Math.PI;
+
+      if (this.threeScene) {
+        this.threeScene.triggerMeleeAnimation(theta);
+      }
+    } else {
+      if (this.threeScene) {
+        this.threeScene.spawnMuzzleFlash(this.weaponSystem.currentWeapon);
+      }
+    }
     const weapon = this.weaponSystem.getCurrentWeapon();
     let blockDamage = result.damage;
     if (weapon.blockDamagePercent !== undefined) {
@@ -274,13 +332,30 @@ export default class GameplayScene extends Phaser.Scene {
     }
 
     let r = -1, c = -1;
+    let hitBlock = null;
 
-    // Use DoomRenderer 3D raycasting if active, otherwise fallback to flat 2D raycasting
-    if (this.doomRenderer) {
-      const hitBlock = this.doomRenderer.getHitBlock(ex, ey);
+    // Use Three.js raycasting for hit detection
+    if (this.threeScene) {
+      hitBlock = this.threeScene.shootRaycast({
+        x: result.recoilOffsetX,
+        y: result.recoilOffsetY
+      });
       if (hitBlock) {
         r = hitBlock.r;
         c = hitBlock.c;
+        if (hitBlock.point) {
+          if (weapon.id !== 'knife' && weapon.key !== 'knife' && this.weaponSystem.currentWeapon !== 'knife') {
+            this.threeScene.spawnTracer(hitBlock.point);
+          }
+          this.threeScene.spawnBulletImpact(hitBlock.point, hitBlock.normal, hitBlock.mesh);
+          
+          // Project hit point to 2D screen space for accurate hit marker
+          const screenPos = hitBlock.point.clone();
+          const activeCamera = this.threeScene.isThirdPerson ? this.threeScene.thirdPersonCamera : this.threeScene.camera;
+          screenPos.project(activeCamera);
+          ex = (screenPos.x * 0.5 + 0.5) * GAME_WIDTH;
+          ey = (1 - (screenPos.y * 0.5 + 0.5)) * GAME_HEIGHT;
+        }
       }
     } else {
       if (ex >= ARENA_X && ex <= ARENA_X + TETRIS_COLS * CELL_SIZE && ey >= ARENA_Y && ey <= ARENA_Y + TETRIS_ROWS * CELL_SIZE) {
@@ -289,25 +364,64 @@ export default class GameplayScene extends Phaser.Scene {
       }
     }
 
-    // AOE for knife
+    // AOE for knife (Random Slash Angle + Per-Block Crit)
     if (weapon.aoe > 0) {
+      if (this.threeScene) {
+        let point = hitBlock?.point;
+        let normal = hitBlock?.normal;
+        
+        // If we missed all blocks and obstacles, we want an air slash close to the player.
+        if (!hitBlock || (!hitBlock.isObstacle && hitBlock.r === -1) || !normal) {
+           const activeCamera = this.threeScene.isThirdPerson ? this.threeScene.thirdPersonCamera : this.threeScene.camera;
+           const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(activeCamera.quaternion);
+           point = activeCamera.position.clone().add(forward.multiplyScalar(4)); 
+           normal = forward.clone().negate(); 
+        }
+        
+        this.threeScene.spawnMeleeSlash(point, normal, theta);
+      }
+
       let hitAny = false;
-      const rad = Math.ceil(weapon.aoe);
+      let critAny = false;
+
       const centerR = r !== -1 ? r : Math.floor((ey - ARENA_Y) / CELL_SIZE);
       const centerC = c !== -1 ? c : Math.floor((ex - ARENA_X) / CELL_SIZE);
       
+      // Retrieve the theta calculated earlier for sync
+      const rad = 2; // radius of 2 for length of 5 blocks
+
       for (let rr = -rad; rr <= rad; rr++) {
         for (let cc = -rad; cc <= rad; cc++) {
-          if (rr*rr + cc*cc > weapon.aoe*weapon.aoe) continue;
-          const tr = centerR+rr, tc = centerC+cc;
-          if (this.tetrisBoard.damageFallingPiece(tr, tc, blockDamage)) hitAny = true;
-          else if (tr >= 0 && tr < TETRIS_ROWS && tc >= 0 && tc < TETRIS_COLS && this.tetrisBoard.grid[tr]?.[tc]) {
-            this.tetrisBoard.damageBlock(tr, tc, blockDamage);
-            hitAny = true;
+          if (rr*rr + cc*cc > rad*rad) continue; // Must be within circle
+          
+          // Check distance to the angled slash line
+          const distToLine = Math.abs(cc * Math.sin(theta) - rr * Math.cos(theta));
+          
+          // A distance of ~0.9 captures the main line and some adjacent blocks (around 8-9 blocks total)
+          if (distToLine <= 0.9) {
+            const tr = centerR+rr, tc = centerC+cc;
+            
+            // Random crit per block
+            const isCrit = Math.random() < 0.3;
+            if (isCrit) critAny = true;
+            const finalDamage = isCrit ? blockDamage * 2 : blockDamage;
+
+            if (this.tetrisBoard.damageFallingPiece(tr, tc, finalDamage)) hitAny = true;
+            else if (tr >= 0 && tr < TETRIS_ROWS && tc >= 0 && tc < TETRIS_COLS && this.tetrisBoard.grid[tr]?.[tc]) {
+              this.tetrisBoard.damageBlock(tr, tc, finalDamage);
+              hitAny = true;
+            }
           }
         }
       }
-      if (hitAny) this.gunnerOverlay.showHitMarker(ex, ey, true);
+
+      if (hitAny) {
+        this.gunnerOverlay.showHitMarker(ex, ey, true);
+        if (critAny && this.playerRole === 'gunner') {
+          const txt = this.add.text(ex, ey-20, 'CRIT!', { fontFamily:'Orbitron', fontSize:'18px', fontStyle: 'bold', color:'#ff0000', stroke:'#ffffff', strokeThickness:3 }).setOrigin(0.5).setDepth(70);
+          this.tweens.add({ targets:txt, alpha:0, y:ey-50, scale: 1.5, duration:800, onComplete:()=>txt.destroy() });
+        }
+      }
       return;
     }
 
@@ -318,8 +432,14 @@ export default class GameplayScene extends Phaser.Scene {
       } else if (r >= 0 && r < TETRIS_ROWS && c >= 0 && c < TETRIS_COLS) {
         const cell = this.tetrisBoard.grid[r]?.[c];
         if (cell) {
+          const color = cell.color;
           const destroyed = this.tetrisBoard.damageBlock(r, c, blockDamage);
           hit = true; this.gunnerOverlay.showHitMarker(ex, ey, destroyed);
+          
+          if (this.threeScene) {
+            this.threeScene.spawnBlockDebris(c, TETRIS_ROWS - 1 - r, 0, color, destroyed ? 15 : 4);
+          }
+
           if (cell.iron) {
             const txt = this.add.text(ex, ey-10, 'IRON', { fontFamily:'Orbitron', fontSize:'10px', color:'#aabbcc', stroke:'#000', strokeThickness:2 }).setOrigin(0.5).setDepth(70);
             this.tweens.add({ targets:txt, alpha:0, y:ey-30, duration:500, onComplete:()=>txt.destroy() });
@@ -333,29 +453,33 @@ export default class GameplayScene extends Phaser.Scene {
   useGrenade() {
     if (this.utilityCooldowns.grenade > 0) return;
     this.utilityCooldowns.grenade = GUNNER_UTILITIES.grenade.cooldown;
-    const cx = this.gunnerOverlay.crosshairX, cy = this.gunnerOverlay.crosshairY;
-    const gc = Math.floor((cx - ARENA_X) / CELL_SIZE), gr = Math.floor((cy - ARENA_Y) / CELL_SIZE);
     const rad = GUNNER_UTILITIES.grenade.radius, dmg = GUNNER_UTILITIES.grenade.damage;
 
-    // Destroy blocks in radius
-    for (let r = -Math.ceil(rad); r <= Math.ceil(rad); r++) {
-      for (let c = -Math.ceil(rad); c <= Math.ceil(rad); c++) {
-        if (r*r + c*c > rad*rad) continue;
-        const tr = gr+r, tc = gc+c;
-        this.tetrisBoard.damageFallingPiece(tr, tc, dmg);
-        if (tr >= 0 && tr < TETRIS_ROWS && tc >= 0 && tc < TETRIS_COLS) {
-          if (this.tetrisBoard.grid[tr]?.[tc]) this.tetrisBoard.damageBlock(tr, tc, dmg);
+    if (this.threeScene) {
+      this.threeScene.throwProjectile('grenade', (hitCol, hitRow, hitPos) => {
+        // Destroy blocks in radius
+        for (let r = -Math.ceil(rad); r <= Math.ceil(rad); r++) {
+          for (let c = -Math.ceil(rad); c <= Math.ceil(rad); c++) {
+            if (r*r + c*c > rad*rad) continue;
+            const tr = hitRow + r, tc = hitCol + c;
+            this.tetrisBoard.damageFallingPiece(tr, tc, dmg);
+            if (tr >= 0 && tr < TETRIS_ROWS && tc >= 0 && tc < TETRIS_COLS) {
+              const cell = this.tetrisBoard.grid[tr]?.[tc];
+              if (cell) {
+                const destroyed = this.tetrisBoard.damageBlock(tr, tc, dmg);
+                this.threeScene.spawnBlockDebris(tc, TETRIS_ROWS - 1 - tr, 0, cell.color, destroyed ? 15 : 4);
+              }
+            }
+          }
         }
-      }
+        // Visual: explosion
+        const exX = hitPos ? hitPos.x : hitCol;
+        const exY = hitPos ? hitPos.y : TETRIS_ROWS - 1 - hitRow;
+        const exZ = hitPos ? hitPos.z : 0;
+        this.threeScene.spawnGrenadeExplosion(exX, exY, exZ, rad);
+        this.cameras.main.shake(300, 0.015);
+      });
     }
-
-    // Visual: explosion
-    const g = this.add.graphics().setDepth(75);
-    g.fillStyle(0xff6600, 0.6); g.fillCircle(cx, cy, rad * CELL_SIZE);
-    g.fillStyle(0xffcc00, 0.4); g.fillCircle(cx, cy, rad * CELL_SIZE * 0.6);
-    g.fillStyle(0xffffff, 0.3); g.fillCircle(cx, cy, rad * CELL_SIZE * 0.3);
-    this.tweens.add({ targets: g, alpha: 0, scaleX: 1.5, scaleY: 1.5, duration: 400, onComplete: () => g.destroy() });
-    this.cameras.main.shake(300, 0.015);
   }
 
   useFlashbang() {
@@ -363,32 +487,58 @@ export default class GameplayScene extends Phaser.Scene {
     this.utilityCooldowns.flashbang = GUNNER_UTILITIES.flashbang.cooldown;
     const dur = GUNNER_UTILITIES.flashbang.duration;
 
-    // White flash covering the whole screen (affects both players)
-    const flash = this.add.graphics().setDepth(100);
-    flash.fillStyle(0xffffff, 0.95);
-    flash.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
-    this.tweens.add({ targets: flash, alpha: 0, duration: dur, ease: 'Power2', onComplete: () => flash.destroy() });
-    this.cameras.main.shake(100, 0.005);
+    if (this.threeScene) {
+      this.threeScene.throwProjectile('flashbang', (hitCol, hitRow, hitPos) => {
+        let flashMultiplier = 1.0;
+        
+        // Directional flash check for Gunner
+        if (this.playerRole === 'gunner' && hitPos) {
+          const camPos = this.threeScene.camera.position;
+          const camDir = new THREE.Vector3();
+          this.threeScene.camera.getWorldDirection(camDir);
+          
+          const toFlash = new THREE.Vector3().subVectors(hitPos, camPos).normalize();
+          const dot = camDir.dot(toFlash);
+          
+          if (dot < 0) {
+            flashMultiplier = 0.15; // Looking entirely away
+          } else if (dot < 0.6) {
+            flashMultiplier = 0.15 + (dot / 0.6) * 0.4; // Looking somewhat away
+          } else {
+            flashMultiplier = 0.55 + ((dot - 0.6) / 0.4) * 0.45; // Looking directly at it
+          }
+        }
+        
+        const finalDur = dur * flashMultiplier;
+        const maxAlpha = 0.95 * flashMultiplier;
+
+        // White flash covering the whole screen
+        const flash = this.add.graphics().setDepth(100);
+        flash.fillStyle(0xffffff, maxAlpha);
+        flash.fillRect(-200, -200, GAME_WIDTH + 400, GAME_HEIGHT + 400);
+        flash.setScrollFactor(0);
+        this.tweens.add({ targets: flash, alpha: 0, duration: finalDur, ease: 'Power2', onComplete: () => flash.destroy() });
+        this.cameras.main.shake(100, 0.005);
+      });
+    }
   }
 
   useSmoke() {
     if (this.utilityCooldowns.smoke > 0) return;
     this.utilityCooldowns.smoke = GUNNER_UTILITIES.smoke.cooldown;
-    const cx = this.gunnerOverlay.crosshairX, cy = this.gunnerOverlay.crosshairY;
     const dur = GUNNER_UTILITIES.smoke.duration;
     const rad = GUNNER_UTILITIES.smoke.radius * CELL_SIZE;
 
-    // Smoke cloud (semi-opaque circles covering arena area)
-    const smoke = this.add.graphics().setDepth(45);
-    for (let i = 0; i < 12; i++) {
-      const ox = (Math.random() - 0.5) * rad * 1.5;
-      const oy = (Math.random() - 0.5) * rad * 1.5;
-      const sr = rad * 0.5 + Math.random() * rad * 0.5;
-      smoke.fillStyle(0x888888, 0.3 + Math.random() * 0.3);
-      smoke.fillCircle(cx + ox, cy + oy, sr);
+    if (this.threeScene) {
+      this.threeScene.throwProjectile('smoke', (hitCol, hitRow, hitPos) => {
+        // Visual: 3D Smoke
+        const exX = hitPos ? hitPos.x : hitCol;
+        const exY = hitPos ? hitPos.y : TETRIS_ROWS - 1 - hitRow;
+        const exZ = hitPos ? hitPos.z : 0;
+        this.threeScene.spawnSmoke(exX, exY, exZ, rad / CELL_SIZE);
+        this._smokeTimer = dur;
+      });
     }
-    this._smokeOverlay = smoke;
-    this._smokeTimer = dur;
   }
 
   /* ════════════════════ EFFECTS ════════════════════ */
@@ -412,6 +562,7 @@ export default class GameplayScene extends Phaser.Scene {
   }
 
   showDamageNumber(damage, combo) {
+    if (this.playerRole !== 'gunner') return;
     const text = combo > 1 ? `-${damage} HP (${combo}× COMBO!)` : `-${damage} HP`;
     const color = combo > 1 ? '#ffd700' : '#ff2d55';
     const d = this.add.text(GAME_WIDTH/2, GAME_HEIGHT/2, text, { fontFamily:'Orbitron', fontSize: combo>1?'26px':'20px', fontStyle:'bold', color, stroke:'#000', strokeThickness:3 }).setOrigin(0.5).setDepth(80);
@@ -427,13 +578,44 @@ export default class GameplayScene extends Phaser.Scene {
   onLineClear(data) {
     const names = { 1:'SINGLE', 2:'DOUBLE', 3:'TRIPLE', 4:'TETRIS!' };
     const color = data.count>=4?'#ffd700':data.count>=3?'#bb44ff':'#00d4ff';
-    const t = this.add.text(GAME_WIDTH/2, GAME_HEIGHT/2-30, names[data.count]||'CLEAR', { fontFamily:'Orbitron', fontSize:data.count>=4?'34px':'22px', fontStyle:'bold', color, stroke:'#000', strokeThickness:4 }).setOrigin(0.5).setDepth(80);
-    this.tweens.add({ targets:t, alpha:0, y:GAME_HEIGHT/2-80, scale:1.4, duration:800, ease:'Power2', onComplete:()=>t.destroy() });
+    if (this.playerRole === 'tetris') {
+      const t = this.add.text(GAME_WIDTH/2, GAME_HEIGHT/2-30, names[data.count]||'CLEAR', { fontFamily:'Orbitron', fontSize:data.count>=4?'34px':'22px', fontStyle:'bold', color, stroke:'#000', strokeThickness:4 }).setOrigin(0.5).setDepth(80);
+      this.tweens.add({ targets:t, alpha:0, y:GAME_HEIGHT/2-80, scale:1.4, duration:800, ease:'Power2', onComplete:()=>t.destroy() });
+    }
     if (data.count >= 3) this.cameras.main.shake(200, data.count >= 4 ? 0.01 : 0.005);
+
+    // Parkour Course Mechanic
+    if (this.threeScene) {
+      const difficulty = this.tetrisBoard ? this.tetrisBoard.level : 1;
+      
+      let lastType = 0;
+      for (let i = 0; i < data.count; i++) {
+        this.time.delayedCall(i * 800, () => {
+          // Pick a random obstacle type (1, 2, or 3) and prevent repeats in the same burst
+          let type = Phaser.Math.Between(1, 3);
+          while (type === lastType && data.count > 1) {
+            type = Phaser.Math.Between(1, 3);
+          }
+          lastType = type;
+          this.threeScene.spawnParkourObstacle(type, difficulty);
+        });
+      }
+    }
   }
 
   onGameOver(data) {
-    this.time.delayedCall(1200, () => {
+    if (this.isGameOverState) return;
+    this.isGameOverState = true;
+    
+    // Slow motion effect over 2 seconds
+    this.tweens.add({
+      targets: this,
+      timeScale: 0,
+      duration: 2000,
+      ease: 'Power2'
+    });
+
+    this.time.delayedCall(2500, () => {
       this.scene.start(SCENES.GAMEOVER, { winner:data.winner, playerRole:this.playerRole, score:this.tetrisBoard.score, lines:this.tetrisBoard.linesCleared, level:this.tetrisBoard.level, gunnerHP:Math.floor(this.bridge.getGunnerHP()), matchTime:this.matchTime });
     });
   }
@@ -576,22 +758,49 @@ export default class GameplayScene extends Phaser.Scene {
             // Simulate drop
             let dropRow = 0;
             while (board.isValidPosition(dropRow + 1, col, rot)) dropRow++;
-            // Score: prefer lower placement, filled neighbors, no holes
-            let score = dropRow * 3;
-            for (let r = 0; r < shape.length; r++) for (let c = 0; c < shape[r].length; c++) {
-              if (!shape[r][c]) continue;
-              const gr = dropRow + r, gc = col + c;
-              if (gr >= 0 && gr < TETRIS_ROWS && gc >= 0 && gc < TETRIS_COLS) {
-                // Bonus for adjacent filled cells
-                if (gc > 0 && board.grid[gr][gc-1]) score += 2;
-                if (gc < TETRIS_COLS-1 && board.grid[gr][gc+1]) score += 2;
-                if (gr < TETRIS_ROWS-1 && board.grid[gr+1]?.[gc]) score += 1;
-                // Penalty for creating holes below
-                for (let below = gr+1; below < TETRIS_ROWS; below++) {
-                  if (!board.grid[below][gc]) { score -= 4; break; }
+            // Create a virtual grid to evaluate
+            let vGrid = board.grid.map(row => [...row]);
+            for (let r = 0; r < shape.length; r++) {
+              for (let c = 0; c < shape[r].length; c++) {
+                if (shape[r][c]) {
+                  const gr = dropRow + r;
+                  const gc = col + c;
+                  if (gr >= 0 && gr < TETRIS_ROWS && gc >= 0 && gc < TETRIS_COLS) {
+                    vGrid[gr][gc] = 1;
+                  }
                 }
               }
             }
+            
+            let lines = 0;
+            let aggHeight = 0;
+            let heights = Array(TETRIS_COLS).fill(0);
+            
+            for (let r = 0; r < TETRIS_ROWS; r++) {
+              let isLine = true;
+              for (let c = 0; c < TETRIS_COLS; c++) {
+                if (!vGrid[r][c]) isLine = false;
+                else if (heights[c] === 0) heights[c] = TETRIS_ROWS - r;
+              }
+              if (isLine) lines++;
+            }
+            
+            let holes = 0;
+            for (let c = 0; c < TETRIS_COLS; c++) {
+              aggHeight += heights[c];
+              let blockFound = false;
+              for (let r = 0; r < TETRIS_ROWS; r++) {
+                if (vGrid[r][c]) blockFound = true;
+                else if (blockFound) holes++;
+              }
+            }
+            
+            let bumpiness = 0;
+            for (let c = 0; c < TETRIS_COLS - 1; c++) {
+              bumpiness += Math.abs(heights[c] - heights[c + 1]);
+            }
+            
+            let score = (lines * 760) - (holes * 350) - (bumpiness * 180) - (aggHeight * 510);
             if (score > bestScore) { bestScore = score; bestCol = col; this._aiTargetRot = rot; }
           }
         }
@@ -629,88 +838,97 @@ export default class GameplayScene extends Phaser.Scene {
 
   /* ════════════════════ UPDATE LOOP ════════════════════ */
   update(time, delta) {
-    if (this.isPaused || this.tetrisBoard.isGameOver) return;
+    if (this.isPaused) return;
+    
+    // Toggle pointer lock hint
+    if (this._lockHintText) {
+      this._lockHintText.setVisible(!this.input.mouse.locked);
+    }
+    
+    // In game over state, wait for timeScale to reach 0 before stopping update completely
+    if (this.isGameOverState && this.timeScale <= 0.01) return;
 
-    this.matchTime += delta / 1000;
-    this.timerText.setText(`${Math.floor(this.matchTime/60).toString().padStart(2,'0')}:${Math.floor(this.matchTime%60).toString().padStart(2,'0')}`);
+    const scaledDelta = delta * this.timeScale;
 
-    this.tetrisBoard.update(delta);
-    if (this.tetrisController) this.tetrisController.update(delta);
-    this.weaponSystem.update(delta);
-    this.bridge.update(delta);
+    this.matchTime += scaledDelta / 1000;
+    if (this.htmlTimer) {
+      this.htmlTimer.innerText = `${Math.floor(this.matchTime/60).toString().padStart(2,'0')}:${Math.floor(this.matchTime%60).toString().padStart(2,'0')}`;
+    }
+
+    const gunnerHP = this.bridge.getGunnerHP();
+    this.tetrisBoard.update(scaledDelta, gunnerHP, this.matchTime);
+    if (this.tetrisController) this.tetrisController.update(scaledDelta);
+    this.weaponSystem.update(scaledDelta);
+    this.bridge.update(scaledDelta);
 
     // Auto-fire AK-47
-    if (this.playerRole === 'gunner' && this.isFiringHeld && this.weaponSystem.currentWeapon === 'ak47') {
+    if (this.playerRole === 'gunner' && this.isFiringHeld && this.weaponSystem.currentWeapon === 'ak47' && !this.isGameOverState) {
       const ptr = this.input.activePointer;
-      if (ptr.isDown) this.handleShot(this.gunnerOverlay.crosshairX, this.gunnerOverlay.crosshairY);
+      if (ptr.isDown) this.handleShot();
     }
 
-    // Render 2D Overlays
-    if (this.doomRenderer) {
-      // 3D background with physical recoil recovery
-      if (this.doomRenderer.camera.pitch < 0) {
-        this.doomRenderer.camera.pitch = Math.min(0, this.doomRenderer.camera.pitch + delta * 0.005);
-      }
-      this.doomRenderer.update(delta, this.tetrisBoard, { x: this.weaponSystem.recoilOffsetX, y: this.weaponSystem.recoilOffsetY });
-    } else {
-      this.tetrisRenderer.render(this.tetrisBoard);
+    // Update Three.js 3D scene
+    if (this.threeScene) {
+      const recoilOffset = this.playerRole === 'gunner' ? this.weaponSystem.recoilOffset : { x: 0, y: 0 };
+      this.threeScene.update(scaledDelta, this.tetrisBoard, recoilOffset);
+      
+      const uiState = {
+        score: this.tetrisBoard.score,
+        level: this.tetrisBoard.level,
+        lines: this.tetrisBoard.linesCleared,
+        gunnerHP: gunnerHP,
+        gunnerMaxRegenHP: this.bridge.gunnerMaxRegenHP,
+        abilities: [
+          { key: 'A', name: 'Iron Body', color: '#ffaa00', cooldown: this.tetrisBoard.cooldowns['A'] || 0 },
+          { key: 'S', name: 'Shield', color: '#00d4ff', cooldown: this.tetrisBoard.cooldowns['S'] || 0 },
+          { key: 'D', name: 'Repair', color: '#00ff88', cooldown: this.tetrisBoard.cooldowns['D'] || 0 },
+          { key: 'F', name: 'Seismic Purge', color: '#ff8800', cooldown: this.tetrisBoard.cooldowns['F'] || 0 }
+        ],
+        ironBodyActive: this.tetrisBoard.ironBodyActive,
+        ironBodyTimer: this.tetrisBoard.ironBodyTimer,
+        shieldHP: this.tetrisBoard.pieceShieldHP,
+        heldPiece: this.tetrisBoard.heldPiece,
+        nextPieces: this.tetrisBoard.nextPieces
+      };
+      this.threeScene.updateUI(uiState);
     }
+    // TetrisRenderer handles 2D previews only (effectGraphics cleared inside render)
+    this.tetrisRenderer.render(this.tetrisBoard);
     
     this.gunnerOverlay.render(this.weaponSystem);
 
-    // Draw 5 next pieces (bigger, visible to gunner for shooting)
-    this._lastNextBounds = [];
-    for (let i = 0; i < 5; i++) {
-      const piece = this.tetrisBoard.nextPieces[i];
-      if (piece) {
-        const dmg = this.tetrisBoard.getNextPieceDamage(i);
-        const py = this.nextStartY + i * this.nextSpacing;
-        const sz = i === 0 ? 22 : 17;
-        this._lastNextBounds.push(this.tetrisRenderer.drawPreview(piece, this.nextQueueX, py, sz, dmg));
-      }
+    // Gunner crosshair uses raycast coords for 3D
+    if (this.playerRole === 'gunner' && !this.input.mouse.locked) {
+      this.gunnerOverlay.updateCrosshair(this.input.activePointer.x, this.input.activePointer.y);
     }
+    // Update HUD texts (safe check)
+    if (this.scoreText) this.scoreText.setText(this.tetrisBoard.score.toString());
+    if (this.levelText) this.levelText.setText(this.tetrisBoard.level.toString());
+    if (this.linesText) this.linesText.setText(this.tetrisBoard.linesCleared.toString());
 
-    // Draw hold piece (big, visible to gunner for shooting)
-    this._lastHoldBounds = this.tetrisRenderer.drawPreview(this.tetrisBoard.heldPiece, this.holdPos.x, this.holdPos.y, 22, this.tetrisBoard._holdDamage);
-
-    // Update HUD texts
-    this.scoreText.setText(this.tetrisBoard.score.toString());
-    this.levelText.setText(this.tetrisBoard.level.toString());
-    this.linesText.setText(this.tetrisBoard.linesCleared.toString());
-
-    this.ironIndicator.setText(this.tetrisBoard.ironBodyActive ? `🛡 Iron Body (${Math.ceil(this.tetrisBoard.ironBodyTimer/1000)}s)` : '');
-    this.shieldIndicator.setText(this.tetrisBoard.pieceShieldHP > 0 ? `✨ Shield Aura (${Math.floor(this.tetrisBoard.pieceShieldHP)} HP)` : '');
-
-    // Ability cooldowns
-    this.abilityTexts.forEach(a => {
-      const cd = this.tetrisBoard.cooldowns[a.key];
-      if (cd > 0) { a.text.setText(`[${a.key}] ${a.name} (${Math.ceil(cd/1000)}s)`); a.text.setColor('#334455'); }
-      else { a.text.setText(`[${a.key}] ${a.name} (RDY)`); a.text.setColor(a.activeColor); }
-    });
-
-    // Weapon highlighting
-    for (const [key, txt] of Object.entries(this.weaponSlotTexts)) {
-      txt.setColor(key === this.weaponSystem.currentWeapon ? '#00d4ff' : '#556677');
-    }
+    if (this.ironIndicator) this.ironIndicator.setText(this.tetrisBoard.ironBodyActive ? `🛡 Iron Body (${Math.ceil(this.tetrisBoard.ironBodyTimer/1000)}s)` : '');
+    if (this.shieldIndicator) this.shieldIndicator.setText(this.tetrisBoard.pieceShieldHP > 0 ? `✨ Shield Aura (${Math.floor(this.tetrisBoard.pieceShieldHP)} HP)` : '');
 
     // HP regen
     const hp = Math.floor(this.bridge.getGunnerHP());
     this.updateHPBar(hp, GUNNER_MAX_HP, this.bridge.gunnerMaxRegenHP);
-    this.regenText.setText(this.bridge.regenActive ? '♥ REGENERATING...' : '');
-    if (this.bridge.regenActive) {
-      this.regenText.setAlpha(0.6 + 0.4 * Math.sin(Date.now() / 150));
-    } else {
-      this.regenText.setAlpha(1);
+    if (this.regenText) {
+      this.regenText.setText(this.bridge.regenActive ? '♥ REGENERATING...' : '');
+      if (this.bridge.regenActive) {
+        this.regenText.setAlpha(0.6 + 0.4 * Math.sin(Date.now() / 150));
+      } else {
+        this.regenText.setAlpha(1);
+      }
     }
 
     // Utility cooldowns
     for (const key of Object.keys(this.utilityCooldowns)) {
-      if (this.utilityCooldowns[key] > 0) this.utilityCooldowns[key] -= delta;
+      if (this.utilityCooldowns[key] > 0) this.utilityCooldowns[key] -= scaledDelta;
     }
 
     // Smoke timer
     if (this._smokeOverlay && this._smokeTimer > 0) {
-      this._smokeTimer -= delta;
+      this._smokeTimer -= scaledDelta;
       if (this._smokeTimer <= 0) { this._smokeOverlay.destroy(); this._smokeOverlay = null; }
       else { this._smokeOverlay.setAlpha(Math.min(1, this._smokeTimer / 1000)); }
     }

@@ -1,0 +1,11 @@
+Model Information:
+* title:	M18 Smoke Grenade
+* source:	https://sketchfab.com/3d-models/m18-smoke-grenade-6dbb48151a9147b4830aa7bf55fc8282
+* author:	RedRogueXIII (https://sketchfab.com/RedRogueXIII)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "M18 Smoke Grenade" (https://sketchfab.com/3d-models/m18-smoke-grenade-6dbb48151a9147b4830aa7bf55fc8282) by RedRogueXIII (https://sketchfab.com/RedRogueXIII) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

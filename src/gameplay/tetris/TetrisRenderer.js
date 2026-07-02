@@ -5,13 +5,14 @@ import { CELL_SIZE, PIECE_COLORS, PIECE_SHAPES, COLORS, TETRIS_ROWS, TETRIS_COLS
 // ghost piece, shield, and iron block visuals.
 
 export default class TetrisRenderer {
-  constructor(scene) {
+  constructor(scene, use3D = false) {
     this.scene = scene;
     this.boardX = ARENA_X;
     this.boardY = ARENA_Y;
     this.cellSize = CELL_SIZE;
     this.rows = TETRIS_ROWS;
     this.cols = TETRIS_COLS;
+    this.use3D = use3D; // When true, Three.js handles main board; we only draw 2D previews
 
     this.bgGraphics = scene.add.graphics().setDepth(0);
     this.gridGraphics = scene.add.graphics().setDepth(1);
@@ -20,7 +21,13 @@ export default class TetrisRenderer {
     this.ghostGraphics = scene.add.graphics().setDepth(2);
     this.effectGraphics = scene.add.graphics().setDepth(5);
 
-    this.drawBackground();
+    if (!this.use3D) {
+      this.drawBackground();
+    } else {
+      // Hide board background/grid — Three.js renders the board
+      this.bgGraphics.setVisible(false);
+      this.gridGraphics.setVisible(false);
+    }
   }
 
   setVisible(visible) {
@@ -129,13 +136,19 @@ export default class TetrisRenderer {
     this.ghostGraphics.clear();
     this.effectGraphics.clear();
 
+    // In 3D mode, Three.js handles the board rendering
+    // We only clear graphics and skip drawing
+    if (this.use3D) {
+      return;
+    }
+
     // Draw locked blocks
     for (let r = 0; r < this.rows; r++) {
       for (let c = 0; c < this.cols; c++) {
         const cell = board.grid[r][c];
         if (cell) {
           this.drawBlock(this.blockGraphics, c, r, cell.color, 1, cell.hp, cell.maxHp, cell.iron);
-          
+
           if (cell.shieldHp > 0) {
             const ax = this.boardX + c * this.cellSize;
             const ay = this.boardY + r * this.cellSize;
@@ -183,13 +196,13 @@ export default class TetrisRenderer {
       if (board.pieceShieldHP > 0) {
         const pulse = 0.5 + 0.3 * Math.sin(Date.now() / 200);
         this.effectGraphics.lineStyle(3, 0x00d4ff, pulse);
-        
+
         for (let r = 0; r < shape.length; r++) {
           for (let c = 0; c < shape[r].length; c++) {
             if (shape[r][c]) {
               const ax = this.boardX + (board.pieceCol + c) * this.cellSize;
               const ay = this.boardY + (board.pieceRow + r) * this.cellSize;
-              
+
               // Draw +1 cell out aura around this cell
               this.effectGraphics.strokeRoundedRect(ax - 3, ay - 3, this.cellSize + 6, this.cellSize + 6, 6);
               this.effectGraphics.fillStyle(0x00ffff, pulse * 0.1);
@@ -233,10 +246,10 @@ export default class TetrisRenderer {
           const hpRatio = hp / 100;
           if (hp <= 0) continue; // destroyed cell
 
-          g.fillStyle(color, 0.8 * (0.5 + 0.5 * hpRatio));
-          g.fillRoundedRect(bx + 1, by + 1, cellSz - 2, cellSz - 2, 2);
-          g.lineStyle(1, color, 0.5);
-          g.strokeRoundedRect(bx + 1, by + 1, cellSz - 2, cellSz - 2, 2);
+          g.fillStyle(color, 1.0);
+          g.fillRoundedRect(bx, by, cellSz - 1, cellSz - 1, 2);
+          g.lineStyle(1, 0xffffff, 0.4);
+          g.strokeRoundedRect(bx, by, cellSz - 1, cellSz - 1, 2);
 
           // Damage cracks on preview
           if (hpRatio < 1 && hpRatio > 0) {

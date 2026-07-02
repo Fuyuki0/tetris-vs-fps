@@ -43,12 +43,19 @@ const config = {
   },
 };
 
-// ─── Launch Game ──────────────────────────────────────────
-const game = new Phaser.Game(config);
+let game;
+
+// ─── Initialize Game ─────────────────────────────────────────
+document.fonts.ready.then(() => {
+  game = new Phaser.Game(config);
+  window.game = game;
+});
 
 // Handle window resize
 window.addEventListener('resize', () => {
-  game.scale.resize(GAME_WIDTH, GAME_HEIGHT);
+  if (game) {
+    game.scale.resize(GAME_WIDTH, GAME_HEIGHT);
+  }
 });
 
 export default game;

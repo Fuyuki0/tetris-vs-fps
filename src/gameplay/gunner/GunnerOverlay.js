@@ -26,6 +26,32 @@ export default class GunnerOverlay {
     // Texts
     this._ammoText = null;
     this._reloadText = null;
+    
+    // Weapon Stack (CS:GO style inventory)
+    this._weaponStackTexts = [];
+    this._weaponList = [
+      { key: 'knife', label: '[1] 🔪 Knife' },
+      { key: 'deagle', label: '[2] 🔫 Deagle' },
+      { key: 'ak47', label: '[3] 🔫 AK-47' },
+      { key: 'grenade', label: '[4] 💣 Grenade' },
+      { key: 'flashbang', label: '[5] ✨ Flash' },
+    ];
+
+    // Toggle View UI
+    this._toggleViewText = this.scene.add.text(GAME_WIDTH - 200, 20, '[V] Toggle View', {
+      fontFamily: 'Orbitron',
+      fontSize: '18px',
+      color: '#ffffff',
+      stroke: '#000000',
+      strokeThickness: 3
+    }).setOrigin(1, 0).setDepth(80);
+
+    // Keyboard listener for V key
+    this.scene.input.keyboard.on('keydown-V', () => {
+      if (this.scene.threeScene && this.scene.playerRole === 'gunner') {
+        this.scene.threeScene.toggleThirdPerson();
+      }
+    });
   }
 
   setVisible(visible) {
@@ -37,12 +63,18 @@ export default class GunnerOverlay {
       this.weaponGraphics.clear();
       this.crosshairGraphics.clear();
       this.effectGraphics.clear();
+      this._weaponStackTexts.forEach(t => t.setVisible(false));
+      this._toggleViewText.setVisible(false);
+    } else {
+      this._weaponStackTexts.forEach(t => t.setVisible(true));
+      this._toggleViewText.setVisible(true);
     }
   }
 
   updateCrosshair(x, y) {
-    this.crosshairX = x;
-    this.crosshairY = y;
+    // In FPS mode, the crosshair is permanently locked to the center of the screen.
+    this.crosshairX = GAME_WIDTH / 2;
+    this.crosshairY = GAME_HEIGHT / 2;
   }
 
   render(weaponSystem) {
@@ -77,7 +109,7 @@ export default class GunnerOverlay {
     // Crosshair color changes based on spread
     const color = spread > 4 ? 0xff2d55 : spread > 2 ? 0xffd700 : 0x00ff88;
 
-    // 1. Draw primary crosshair at exact mouse position
+    // 1. Draw primary crosshair at exact center of screen
     g.lineStyle(2, color, 0.9);
     g.lineBetween(cx, cy - size, cx, cy - gap); // Top
     g.lineBetween(cx, cy + gap, cx, cy + size); // Bottom
@@ -86,174 +118,15 @@ export default class GunnerOverlay {
     g.fillStyle(color, 0.8);
     g.fillCircle(cx, cy, 1.5); // Center dot
 
-    // 2. Draw faint ghost crosshair at recoil position if there's recoil
-    if (Math.abs(recoil.x) > 1 || Math.abs(recoil.y) > 1) {
-      g.lineStyle(1, 0xffffff, 0.3); // Faint white
-      g.lineBetween(rx, ry - size, rx, ry - gap);
-      g.lineBetween(rx, ry + gap, rx, ry + size);
-      g.lineBetween(rx - size, ry, rx - gap, ry);
-      g.lineBetween(rx + gap, ry, rx + size, ry);
-      g.fillStyle(0xffffff, 0.4);
-      g.fillCircle(rx, ry, 1);
-    }
-
-    // Spread indicator circle (faint, around recoil position since that's where spread applies)
+    // Spread indicator circle (faint, around primary crosshair)
     if (spread > 1) {
       g.lineStyle(1, color, 0.15);
-      g.strokeCircle(rx, ry, spread * 3);
+      g.strokeCircle(cx, cy, spread * 3);
     }
   }
 
   drawWeapon(weaponSystem) {
-    if (!weaponSystem) return;
-    const g = this.weaponGraphics;
-    const recoil = weaponSystem.recoilOffset;
-    const weaponKey = weaponSystem.currentWeapon;
-
-    // Weapon position: bottom-right of screen
-    const baseX = GAME_WIDTH - 200;
-    const baseY = GAME_HEIGHT - 50;
-
-    this.weaponBobPhase += 0.025;
-    const bobX = Math.sin(this.weaponBobPhase) * 2;
-    const bobY = Math.cos(this.weaponBobPhase * 0.7) * 1.5;
-
-    // Recoil visual — weapon kicks up and to the side
-    const recoilVisualX = recoil.x * 0.3;
-    const recoilVisualY = Math.min(0, recoil.y * 0.4);
-
-    const wx = baseX + bobX + recoilVisualX;
-    const wy = baseY + bobY + recoilVisualY;
-
-    if (weaponKey === 'knife') {
-      this._drawKnife(g, wx, wy);
-    } else if (weaponKey === 'deagle') {
-      this._drawDeagle(g, wx, wy);
-    } else if (weaponKey === 'ak47') {
-      this._drawAK47(g, wx, wy);
-    }
-  }
-
-  _drawKnife(g, x, y) {
-    // Blade
-    g.fillStyle(0xcccccc, 0.9);
-    g.fillTriangle(x + 50, y - 40, x + 130, y - 80, x + 55, y - 15);
-    // Edge highlight
-    g.lineStyle(1, 0xffffff, 0.5);
-    g.lineBetween(x + 50, y - 40, x + 130, y - 80);
-    // Handle
-    g.fillStyle(0x553311, 0.9);
-    g.fillRect(x + 30, y - 28, 28, 45);
-    // Guard
-    g.fillStyle(0x888888, 0.9);
-    g.fillRect(x + 25, y - 30, 38, 5);
-    // Grip texture
-    g.lineStyle(1, 0x442200, 0.4);
-    for (let i = 0; i < 5; i++) {
-      g.lineBetween(x + 32, y - 22 + i * 8, x + 56, y - 22 + i * 8);
-    }
-  }
-
-  _drawDeagle(g, x, y) {
-    // Slide (top)
-    g.fillStyle(0x2a2a2a, 0.95);
-    g.fillRect(x, y - 30, 120, 22);
-    // Barrel
-    g.fillStyle(0x1a1a1a, 0.95);
-    g.fillRect(x + 110, y - 27, 40, 16);
-    // Muzzle
-    g.fillStyle(0x111111, 1);
-    g.fillCircle(x + 150, y - 19, 6);
-    // Slide serrations
-    g.lineStyle(1, 0x444444, 0.4);
-    for (let i = 0; i < 6; i++) {
-      g.lineBetween(x + 80 + i * 5, y - 29, x + 80 + i * 5, y - 10);
-    }
-    // Trigger guard
-    g.lineStyle(2, 0x333333, 0.8);
-    g.strokeCircle(x + 55, y + 5, 14);
-    // Grip
-    g.fillStyle(0x222222, 0.95);
-    g.beginPath();
-    g.moveTo(x + 20, y - 8);
-    g.lineTo(x + 70, y - 8);
-    g.lineTo(x + 60, y + 45);
-    g.lineTo(x + 15, y + 45);
-    g.closePath();
-    g.fill();
-    // Grip texture
-    g.lineStyle(1, 0x333333, 0.3);
-    for (let i = 0; i < 6; i++) {
-      g.lineBetween(x + 22, y + i * 7, x + 62, y + i * 7);
-    }
-    // Top highlight
-    g.lineStyle(1, 0x555555, 0.5);
-    g.lineBetween(x + 2, y - 29, x + 118, y - 29);
-    // Front sight
-    g.fillStyle(0x555555, 0.8);
-    g.fillRect(x + 105, y - 35, 3, 6);
-    // Rear sight
-    g.fillStyle(0x555555, 0.8);
-    g.fillRect(x + 5, y - 35, 8, 5);
-    g.fillRect(x + 18, y - 35, 8, 5);
-  }
-
-  _drawAK47(g, x, y) {
-    // Receiver / main body
-    g.fillStyle(0x2d2d2d, 0.95);
-    g.fillRect(x - 60, y - 28, 170, 20);
-    // Barrel + gas tube
-    g.fillStyle(0x1f1f1f, 0.95);
-    g.fillRect(x + 100, y - 25, 70, 12);
-    g.fillStyle(0x252525, 0.9);
-    g.fillRect(x + 100, y - 30, 60, 6);
-    // Front sight
-    g.fillStyle(0x444444, 0.9);
-    g.fillRect(x + 155, y - 38, 3, 12);
-    // Rear sight
-    g.fillStyle(0x444444, 0.8);
-    g.fillRect(x + 30, y - 34, 10, 6);
-    // Magazine (curved)
-    g.fillStyle(0x252525, 0.95);
-    g.beginPath();
-    g.moveTo(x + 10, y - 8);
-    g.lineTo(x + 45, y - 8);
-    g.lineTo(x + 38, y + 50);
-    g.lineTo(x + 5, y + 55);
-    g.closePath();
-    g.fill();
-    // Stock (wooden)
-    g.fillStyle(0x5a3820, 0.9);
-    g.fillRect(x - 100, y - 25, 45, 16);
-    // Stock bottom
-    g.fillStyle(0x4a2e18, 0.85);
-    g.beginPath();
-    g.moveTo(x - 100, y - 9);
-    g.lineTo(x - 58, y - 9);
-    g.lineTo(x - 65, y + 25);
-    g.lineTo(x - 105, y + 20);
-    g.closePath();
-    g.fill();
-    // Pistol grip (wooden)
-    g.fillStyle(0x4a2e18, 0.9);
-    g.beginPath();
-    g.moveTo(x + 55, y - 8);
-    g.lineTo(x + 78, y - 8);
-    g.lineTo(x + 72, y + 35);
-    g.lineTo(x + 50, y + 35);
-    g.closePath();
-    g.fill();
-    // Muzzle brake
-    g.fillStyle(0x111111, 1);
-    g.fillRect(x + 165, y - 24, 10, 10);
-    // Highlight
-    g.lineStyle(1, 0x444444, 0.3);
-    g.lineBetween(x - 58, y - 27, x + 108, y - 27);
-    // Wood grain on stock
-    g.lineStyle(1, 0x3a2010, 0.2);
-    for (let i = 0; i < 4; i++) {
-      g.lineBetween(x - 98 + i * 10, y - 24, x - 98 + i * 10, y - 10);
-    }
+    // 2D weapons have been replaced by true 3D view models in ThreeScene.js!
   }
 
   // ─── Ammo display ─────────────────────────────────────
@@ -288,44 +161,51 @@ export default class GunnerOverlay {
     }
   }
 
+  // ─── CS:GO 2 Style Weapon Stack ───────────────────────
+    // Note: The 2D Weapon Stack UI has been replaced by the 3D Holographic UI in ThreeScene.js.
+    // The cooldowns and selections are now rendered directly as 3D models.
+
   // ─── Muzzle flash / attack effect ──────────────────────────────
-  muzzleFlash(weaponKey) {
+  muzzleFlash(weaponKey, theta = 0, hitX = null, hitY = null) {
     const g = this.scene.add.graphics().setDepth(55);
     let fx, fy;
 
     if (weaponKey === 'knife') {
-      // Slash effect — multi-layer diagonal slash
-      fx = this.crosshairX;
-      fy = this.crosshairY;
-      const angle = -0.6 + Math.random() * 0.3; // slight random angle
+      // Slash effect — multi-layer slash matching the theta angle
+      fx = hitX !== null ? hitX : this.crosshairX;
+      fy = hitY !== null ? hitY : this.crosshairY;
+      
+      const len = 70;
+      const dx = Math.cos(theta) * len;
+      const dy = Math.sin(theta) * len;
 
       // Outer glow
       const g2 = this.scene.add.graphics().setDepth(54);
       g2.lineStyle(12, 0xff2d55, 0.25);
       g2.beginPath();
-      g2.moveTo(fx - 50, fy - 45);
-      g2.lineTo(fx + 55, fy + 40);
+      g2.moveTo(fx - dx, fy - dy);
+      g2.lineTo(fx + dx, fy + dy);
       g2.stroke();
 
       // Main slash line (bright white)
       g.lineStyle(5, 0xffffff, 0.95);
       g.beginPath();
-      g.moveTo(fx - 45, fy - 40);
-      g.lineTo(fx + 50, fy + 35);
+      g.moveTo(fx - dx * 0.9, fy - dy * 0.9);
+      g.lineTo(fx + dx * 0.9, fy + dy * 0.9);
       g.stroke();
 
       // Inner slash (thinner, cyan)
       g.lineStyle(2, 0x00d4ff, 0.8);
       g.beginPath();
-      g.moveTo(fx - 42, fy - 37);
-      g.lineTo(fx + 47, fy + 32);
+      g.moveTo(fx - dx * 0.85, fy - dy * 0.85);
+      g.lineTo(fx + dx * 0.85, fy + dy * 0.85);
       g.stroke();
 
       // Spark particles along the slash
       for (let i = 0; i < 8; i++) {
         const t = i / 7;
-        const px = fx - 45 + t * 95 + (Math.random() - 0.5) * 20;
-        const py = fy - 40 + t * 75 + (Math.random() - 0.5) * 20;
+        const px = fx - dx + t * (dx * 2) + (Math.random() - 0.5) * 20;
+        const py = fy - dy + t * (dy * 2) + (Math.random() - 0.5) * 20;
         const sz = 2 + Math.random() * 3;
         g.fillStyle(i < 4 ? 0xffffff : 0xff2d55, 0.7 + Math.random() * 0.3);
         g.fillCircle(px, py, sz);
@@ -376,9 +256,11 @@ export default class GunnerOverlay {
 
   // ─── Hit marker ───────────────────────────────────────
   showHitMarker(x, y, isDestroyed) {
-    const color = isDestroyed ? '#ff2d55' : '#ffffff';
-    const symbol = isDestroyed ? '✕' : '×';
-    const size = isDestroyed ? '22px' : '16px';
+    if (!isDestroyed) return; // Only show red hit markers for destroyed blocks
+
+    const color = '#ff2d55';
+    const symbol = '✕';
+    const size = '22px';
 
     const marker = this.scene.add.text(x, y, symbol, {
       fontFamily: 'Inter', fontSize: size, color, fontStyle: 'bold',

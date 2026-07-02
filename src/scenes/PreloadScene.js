@@ -11,7 +11,7 @@ export default class PreloadScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor(COLORS.BG_DARK);
 
     // Title
-    this.add.text(width / 2, height / 2 - 60, 'TETRIS VS GUNNER', {
+    this.add.text(width / 2, height / 2 - 60, 'TETRIS VS FPS', {
       fontFamily: 'Orbitron',
       fontSize: '36px',
       fontStyle: 'bold',

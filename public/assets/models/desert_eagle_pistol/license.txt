@@ -1,0 +1,11 @@
+Model Information:
+* title:	Desert Eagle Pistol
+* source:	https://sketchfab.com/3d-models/desert-eagle-pistol-dc0c2fab66b1432e8ecf6b0e87632408
+* author:	Stein Games (https://sketchfab.com/steingames)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Desert Eagle Pistol" (https://sketchfab.com/3d-models/desert-eagle-pistol-dc0c2fab66b1432e8ecf6b0e87632408) by Stein Games (https://sketchfab.com/steingames) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

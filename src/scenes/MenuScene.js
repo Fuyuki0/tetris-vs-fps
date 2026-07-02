@@ -47,7 +47,7 @@ export default class MenuScene extends Phaser.Scene {
 
     // ─── Main Title ───
     const titleY = height * 0.18;
-    const title = this.add.text(width / 2, titleY, 'TETRIS VS GUNNER', {
+    const title = this.add.text(width / 2, titleY, 'TETRIS VS FPS', {
       fontFamily: 'Orbitron', fontSize: '48px', fontStyle: 'bold',
       color: '#ffffff',
       stroke: '#001a33', strokeThickness: 4,
@@ -130,7 +130,7 @@ export default class MenuScene extends Phaser.Scene {
     this.createRoleCard(
       width / 2 + cardGap / 2, cardY,
       cardW, cardH,
-      '🔫', 'GUNNER PLAYER',
+      '🔫', 'FPS PLAYER',
       'Aim, shoot, destroy blocks.\nSwitch weapons and dominate the board.',
       COLORS.ACCENT_PINK,
       [

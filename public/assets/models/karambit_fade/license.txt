@@ -1,0 +1,11 @@
+Model Information:
+* title:	Karambit fade
+* source:	https://sketchfab.com/3d-models/karambit-fade-b4ead4fae7e940489f62db71aac62c9e
+* author:	Niilo Poutanen (https://sketchfab.com/niilo.poutanen)
+
+Model License:
+* license type:	CC-BY-ND-4.0 (http://creativecommons.org/licenses/by-nd/4.0/)
+* requirements:	Author must be credited. Modified versions can not be distributed. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Karambit fade" (https://sketchfab.com/3d-models/karambit-fade-b4ead4fae7e940489f62db71aac62c9e) by Niilo Poutanen (https://sketchfab.com/niilo.poutanen) licensed under CC-BY-ND-4.0 (http://creativecommons.org/licenses/by-nd/4.0/)

@@ -25,7 +25,7 @@ export default class LobbyScene extends Phaser.Scene {
     }).setOrigin(0.5);
 
     // Title
-    const roleName = this.selectedRole === 'tetris' ? 'TETRIS PLAYER' : 'GUNNER PLAYER';
+    const roleName = this.selectedRole === 'tetris' ? 'TETRIS PLAYER' : 'FPS PLAYER';
     this.add.text(width / 2, height * 0.45, `Playing as ${roleName}`, {
       fontFamily: 'Orbitron', fontSize: '22px', fontStyle: 'bold', color: '#ffffff',
     }).setOrigin(0.5);

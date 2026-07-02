@@ -1,0 +1,11 @@
+Model Information:
+* title:	PUBG Mobile Grenade
+* source:	https://sketchfab.com/3d-models/pubg-mobile-grenade-91d93fe9e969413f9ca9981d4a7213c4
+* author:	Rex (https://sketchfab.com/rex_7)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "PUBG Mobile Grenade" (https://sketchfab.com/3d-models/pubg-mobile-grenade-91d93fe9e969413f9ca9981d4a7213c4) by Rex (https://sketchfab.com/rex_7) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

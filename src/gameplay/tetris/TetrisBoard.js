@@ -17,11 +17,15 @@ export default class TetrisBoard {
     this.combo = -1;
     this.abilityCharge = 0; // Kept for score/level purposes if needed
     
-    this.cooldowns = { Q: 0, E: 0, F: 0, G: 0 };
+    this.cooldowns = { A: 0, S: 0, D: 0, F: 0 };
+    
+    // Purge multiplier
+    this.purgeCooldownMultiplier = 1.0;
 
     this.currentPiece = null;
     this.nextPieces = [];  // Queue of 5 upcoming pieces
-    this.heldPiece = null;
+    this.bag = [];
+    this.heldPiece = this._getRandomPiece();
     this.canHold = true;
     this.lastLineClearTime = 0; // Track for gunner HP regen
 
@@ -29,9 +33,7 @@ export default class TetrisBoard {
     this.pieceCol = 0;
     this.rotation = 0;
 
-    this.bag = [];
-
-    this.dropInterval = 1000;
+    this.baseDropInterval = 1000;
     this.dropTimer = 0;
     this.lockDelay = 500;
     this.lockTimer = 0;
@@ -39,6 +41,7 @@ export default class TetrisBoard {
     this.ghostRow = 0;
     this.isGameOver = false;
     this.isPaused = false;
+    this.currentGunnerHP = 1000;
 
     // Ability states
     this.ironBodyActive = false;
@@ -118,18 +121,20 @@ export default class TetrisBoard {
 
   isValidPosition(row, col, rotation) {
     const shape = this.getShape(this.currentPiece, rotation);
+    let hasAliveBlocks = false;
+    
     for (let r = 0; r < shape.length; r++) {
       for (let c = 0; c < shape[r].length; c++) {
         if (shape[r][c]) {
           // Skip collision check if this specific block is destroyed
-          // Note: If testing alternative rotations (AI), we only have damage for the current rotation,
-          // but for basic movement/dropping, rotation === this.rotation, so keys match exactly.
           if (rotation === this.rotation && this._fallingDamage) {
             const key = `${r}_${c}`;
             if (this._fallingDamage[key] !== undefined && this._fallingDamage[key] <= 0) {
               continue;
             }
           }
+          
+          hasAliveBlocks = true;
 
           const newRow = row + r;
           const newCol = col + c;
@@ -142,6 +147,12 @@ export default class TetrisBoard {
         }
       }
     }
+    
+    // Prevent infinite falling if all blocks are destroyed
+    if (!hasAliveBlocks) {
+      if (row >= this.rows) return false;
+    }
+    
     return true;
   }
 
@@ -302,7 +313,7 @@ export default class TetrisBoard {
               color: PIECE_COLORS[this.currentPiece],
               hp: Math.min(cellHp, BLOCK_HP),
               maxHp: BLOCK_HP,
-              iron: false,
+              iron: isIron,
               shieldHp: this.pieceShieldHP > 0 ? this.pieceShieldHP : 0,
               id: `${Date.now()}_${row}_${col}`,
             };
@@ -318,14 +329,30 @@ export default class TetrisBoard {
       return;
     }
 
-    // Apply shield ONLY to the locked piece's blocks, not connected blocks
+    // Apply shield to the locked piece's blocks AND their adjacent blocks (+1 range)
     if (this.pieceShieldHP > 0 && lockedBlocks.length > 0) {
       const shieldVal = this.pieceShieldHP;
+      const shieldedSet = new Set();
+      
+      // Determine all blocks to shield (original + adjacent)
       for (const { row, col } of lockedBlocks) {
-        if (this.grid[row]?.[col]) {
-          this.grid[row][col].shieldHp = shieldVal;
+        for (let dr = -1; dr <= 1; dr++) {
+          for (let dc = -1; dc <= 1; dc++) {
+            const r = row + dr;
+            const c = col + dc;
+            if (r >= 0 && r < this.rows && c >= 0 && c < this.cols && this.grid[r][c]) {
+              shieldedSet.add(`${r}_${c}`);
+            }
+          }
         }
       }
+      
+      // Apply the shield HP to all identified blocks
+      for (const key of shieldedSet) {
+        const [rStr, cStr] = key.split('_');
+        this.grid[parseInt(rStr)][parseInt(cStr)].shieldHp = shieldVal;
+      }
+      
       this.pieceShieldHP = 0;
     }
 
@@ -364,7 +391,7 @@ export default class TetrisBoard {
     this.linesCleared += count;
     this.abilityCharge += count;
     this.level = Math.floor(this.linesCleared / 10) + 1;
-    this.dropInterval = Math.max(100, 1000 * Math.pow(0.85, this.level - 1));
+    this.baseDropInterval = Math.max(100, 1000 * Math.pow(0.85, this.level - 1));
     this.lastLineClearTime = Date.now();
 
     eventBus.emit(EVENTS.LINE_CLEARED, { rows, count });
@@ -384,12 +411,9 @@ export default class TetrisBoard {
     const cell = this.grid[row][col];
     if (!cell) return false;
 
-    // Iron blocks cannot be destroyed
-    if (cell.iron) return false;
-
-    // Iron Body Active: reduce incoming damage globally
-    if (this.ironBodyActive) {
-      damage /= ABILITIES.ironBody.hpMultiplier;
+    // Iron Body Active: reduce incoming damage by 1/3
+    if (this.ironBodyActive || cell.iron) {
+      damage *= (2/3);
     }
 
     // Shield protection (old global wall shield logic)
@@ -423,7 +447,7 @@ export default class TetrisBoard {
     if (!this.currentPiece || this.isGameOver) return false;
 
     if (this.ironBodyActive) {
-      damage /= ABILITIES.ironBody.hpMultiplier;
+      damage *= (2/3);
     }
 
     const shape = this.getShape();
@@ -498,10 +522,18 @@ export default class TetrisBoard {
   // ─── Ability: Iron Body (Q) ────────────────────────────
   // All existing blocks become 3x harder to destroy for 6s
   activateIronBody() {
-    if (this.cooldowns.Q <= 0) {
-      this.cooldowns.Q = ABILITIES.ironBody.cooldown;
+    if (this.cooldowns.A <= 0) {
+      this.cooldowns.A = ABILITIES.ironBody.cooldown;
       this.ironBodyActive = true;
       this.ironBodyTimer = ABILITIES.ironBody.duration;
+      for (let r = 0; r < this.rows; r++) {
+        for (let c = 0; c < this.cols; c++) {
+          const cell = this.grid[r][c];
+          if (cell) {
+            cell.iron = true;
+          }
+        }
+      }
       eventBus.emit(EVENTS.ABILITY_USED, { ability: 'ironBody' });
       return true;
     }
@@ -511,8 +543,8 @@ export default class TetrisBoard {
   // ─── Ability: Shield Aura (E) ─────────────────────────
   // Gives the current falling piece a shield that absorbs damage
   activateShield() {
-    if (this.cooldowns.E <= 0 && this.currentPiece) {
-      this.cooldowns.E = ABILITIES.shield.cooldown;
+    if (this.cooldowns.S <= 0 && this.currentPiece) {
+      this.cooldowns.S = ABILITIES.shield.cooldown;
       this.pieceShieldHP = ABILITIES.shield.shieldHP;
       eventBus.emit(EVENTS.ABILITY_USED, { ability: 'shield' });
       return true;
@@ -523,8 +555,8 @@ export default class TetrisBoard {
   // ─── Ability: Repair (F) ──────────────────────────────
   // Heals all damaged blocks by a fixed amount
   activateRepair() {
-    if (this.cooldowns.F <= 0) {
-      this.cooldowns.F = ABILITIES.repair.cooldown;
+    if (this.cooldowns.D <= 0) {
+      this.cooldowns.D = ABILITIES.repair.cooldown;
       const heal = ABILITIES.repair.healAmount;
       for (let r = 0; r < this.rows; r++) {
         for (let c = 0; c < this.cols; c++) {
@@ -543,8 +575,8 @@ export default class TetrisBoard {
   // ─── Ability: Seismic Purge (G) ───────────────────────
   // Clears the bottom 3 rows instantly
   activateSeismicPurge() {
-    if (this.cooldowns.G <= 0) {
-      this.cooldowns.G = ABILITIES.seismicPurge.cooldown;
+    if (this.cooldowns.F <= 0) {
+      this.cooldowns.F = ABILITIES.seismicPurge.cooldown;
       const rowsToClear = ABILITIES.seismicPurge.rows;
       for (let i = 0; i < rowsToClear; i++) {
         this.grid.splice(this.rows - 1, 1);
@@ -558,8 +590,9 @@ export default class TetrisBoard {
     return false;
   }
 
-  update(delta) {
+  update(delta, gunnerHP = 1000, matchTime = 0) {
     if (this.isGameOver || this.isPaused) return;
+    this.currentGunnerHP = gunnerHP;
 
     // Cooldowns
     for (const key of Object.keys(this.cooldowns)) {
@@ -576,7 +609,9 @@ export default class TetrisBoard {
         for (let r = 0; r < this.rows; r++) {
           for (let c = 0; c < this.cols; c++) {
             const cell = this.grid[r][c];
-            if (cell) { cell.maxHp = BLOCK_HP; cell.hp = Math.min(cell.hp, BLOCK_HP); }
+            if (cell) { 
+              cell.iron = false;
+            }
           }
         }
       }
@@ -592,7 +627,19 @@ export default class TetrisBoard {
       }
     }
 
-    if (this.dropTimer >= this.dropInterval) {
+    const hpRatio = Math.max(0, this.currentGunnerHP / 1000);
+    // At 1000 HP, multiplier is 1.0. At 0 HP, multiplier is 0.35 (nearly 3x faster)
+    const speedMultiplier = 0.35 + (0.65 * hpRatio);
+    
+    // Linear graph based on match time (seconds)
+    // start (slower falling): 1.0
+    // late game (6+ minutes in): approaches 0.1
+    const timeMultiplier = Math.max(0.1, 1.0 - (matchTime * 0.0025));
+    
+    // Ensure it doesn't get ridiculously unplayable, set a 50ms absolute minimum limit.
+    const effectiveDropInterval = Math.max(50, this.baseDropInterval * speedMultiplier * timeMultiplier);
+
+    if (this.dropTimer >= effectiveDropInterval) {
       this.dropTimer = 0;
       if (!this.moveDown()) {
         this.isLocking = true;

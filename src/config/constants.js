@@ -129,7 +129,7 @@ export const HP_REGEN_DELAY = 2000;  // ms without line clears before regen star
 export const WEAPONS = {
   knife: {
     name: 'Knife',
-    damage: 25,
+    damage: 45,
     fireRate: 1500,
     maxAmmo: Infinity,
     reserveAmmo: Infinity,
@@ -145,27 +145,27 @@ export const WEAPONS = {
   deagle: {
     name: 'Deagle',
     damage: 35,
-    fireRate: 400,
+    fireRate: 250, // Much faster RPM
     maxAmmo: 7,
     reserveAmmo: Infinity,
     reloadTime: 1200, // Reduced from 2200
     blockDamagePercent: 75, // Exactly 75% of a block's max HP per shot
-    spread: 1.5,
+    spread: 2.5, // Increased base spread due to recoil
     type: 'hitscan',
     icon: '🔫',
     slot: 2,
     recoilPattern: [
-      { x: 0, y: -18 },
-      { x: 2, y: -22 },
-      { x: -3, y: -25 },
-      { x: 4, y: -20 },
-      { x: -2, y: -24 },
-      { x: 3, y: -22 },
-      { x: -4, y: -26 },
+      { x: 0, y: -10 },
+      { x: 2, y: -20 },
+      { x: -4, y: -30 },
+      { x: 6, y: -50 },
+      { x: -4, y: -70 },
+      { x: 8, y: -90 },
+      { x: -8, y: -110 },
     ],
-    recoilRecovery: 0.015,
+    recoilRecovery: 0.15, // VERY fast recovery so it snaps down quickly
     baseSpread: 1.5,
-    spamSpread: 12,
+    spamSpread: 4,
   },
   ak47: {
     name: 'AK-47',
@@ -180,18 +180,22 @@ export const WEAPONS = {
     type: 'hitscan',
     icon: '🔫',
     slot: 3,
-    // AK-47 CS:GO Recoil: 15 up, 8 left, 7 right (heavier)
+    // AK-47 CS:GO Recoil: Accurate to the classic spray pattern image
     recoilPattern: [
-      // Phase 1 (1-15): Straight up, VERY heavy
-      { x: 0, y: -20 }, { x: -2, y: -28 }, { x: 2, y: -36 }, { x: -1, y: -45 }, { x: 1, y: -55 },
-      { x: -2, y: -65 }, { x: 2, y: -72 }, { x: -1, y: -78 }, { x: 1, y: -82 }, { x: -2, y: -82 },
-      { x: 2, y: -80 }, { x: -1, y: -75 }, { x: 1, y: -70 }, { x: -2, y: -60 }, { x: 2, y: -50 },
-      // Phase 2 (16-23): Hard left
-      { x: -25, y: -20 }, { x: -35, y: -15 }, { x: -45, y: -10 }, { x: -50, y: -10 }, { x: -45, y: -5 },
-      { x: -40, y: -5 }, { x: -30, y: -5 }, { x: -20, y: -5 },
-      // Phase 3 (24-30): Hard right
-      { x: 25, y: -5 }, { x: 35, y: -10 }, { x: 45, y: -10 }, { x: 40, y: -5 },
-      { x: 35, y: -5 }, { x: 25, y: -5 }, { x: 15, y: -5 },
+      // Shots 1-9: Climbs straight up with a very slight leftward curve at the top
+      { x: 0, y: -6 }, { x: 1, y: -13 }, { x: 0, y: -20 }, { x: -1, y: -28 },
+      { x: 0, y: -36 }, { x: -2, y: -44 }, { x: -4, y: -52 }, { x: -6, y: -58 }, { x: -8, y: -62 },
+      
+      // Shots 10-14: Hooks to the right
+      { x: -2, y: -64 }, { x: 5, y: -65 }, { x: 12, y: -66 }, { x: 15, y: -65 }, { x: 10, y: -64 },
+      
+      // Shots 15-22: Sweeps hard left
+      { x: 2, y: -63 }, { x: -8, y: -62 }, { x: -18, y: -61 }, { x: -26, y: -60 },
+      { x: -32, y: -59 }, { x: -36, y: -58 }, { x: -34, y: -59 }, { x: -28, y: -60 },
+      
+      // Shots 23-30: Sweeps all the way back to the far right
+      { x: -15, y: -62 }, { x: -2, y: -63 }, { x: 10, y: -64 }, { x: 22, y: -63 },
+      { x: 32, y: -62 }, { x: 40, y: -61 }, { x: 45, y: -60 }, { x: 48, y: -59 }
     ],
     recoilRecovery: 0.03,
     baseSpread: 2.5,
@@ -203,7 +207,7 @@ export const WEAPONS = {
 export const GUNNER_UTILITIES = {
   grenade: { name: 'Grenade', key: '4', cooldown: 8000, radius: 2.5, damage: 60, icon: '💣' },
   flashbang: { name: 'Flashbang', key: '5', cooldown: 12000, duration: 10000, icon: '✨' },
-  smoke: { name: 'Smoke', key: '6', cooldown: 15000, duration: 5000, radius: 3.6, icon: '💨' },
+  smoke: { name: 'Smoke', key: '6', cooldown: 15000, duration: 1666, radius: 1.8, icon: '💨' },
 };
 
 // ─── Tetris Abilities ─────────────────────────────────────
@@ -211,7 +215,7 @@ export const ABILITIES = {
   ironBody: { name: 'Iron Body', cooldown: 15000, duration: 6000, key: 'Q', description: 'All blocks become harder to destroy for 6s', hpMultiplier: 3 },
   shield: { name: 'Shield', cooldown: 12000, shieldHP: 120, key: 'E', description: 'Falling block gets a protective aura' },
   repair: { name: 'Repair', cooldown: 18000, healAmount: 30, key: 'F', description: 'Restores 30 HP to all damaged blocks' },
-  seismicPurge: { name: 'Seismic Purge', cooldown: 25000, rows: 3, key: 'G', description: 'Clears the bottom 3 rows instantly' },
+  seismicPurge: { name: 'Seismic Purge', cooldown: 20000, rows: 3, key: 'G', description: 'Clears the bottom 3 rows instantly' },
 };
 
 // ─── Scene Keys ───────────────────────────────────────────

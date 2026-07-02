@@ -39,26 +39,29 @@ export default class GameBridge {
     // Purge ability clears lines for survival, but deals no damage to Gunner
     if (data.isPurge) return;
 
-    const { count } = data;
-    const baseDamage = LINE_DAMAGE[count] || 10;
     this.combo++;
-    const comboDamage = (this.combo - 1) * COMBO_BONUS;
-    const totalDamage = baseDamage + comboDamage;
+    this.lastLineClearTime = Date.now();
+    this.regenActive = false;
+    
+    // The damage to gunner is now handled by Parkour Obstacles colliding in ThreeScene.js!
+  }
 
-    const actualDamageTaken = Math.min(this.gunnerHP, totalDamage);
-    this.gunnerHP = Math.max(0, this.gunnerHP - totalDamage);
+  damageGunner(amount) {
+    if (this.isGameOver) return;
+    
+    const actualDamageTaken = Math.min(this.gunnerHP, amount);
+    this.gunnerHP = Math.max(0, this.gunnerHP - amount);
     
     // Permanent damage: Gunner loses 20% of damage taken from their max possible regeneration cap
     this.gunnerMaxRegenHP = Math.max(1, this.gunnerMaxRegenHP - (actualDamageTaken * 0.2));
-
-    this.lastLineClearTime = Date.now();
+    
     this.regenActive = false;
-
+    
     eventBus.emit(EVENTS.BLOCK_DAMAGED, {
       gunnerHP: this.gunnerHP,
       maxHP: GUNNER_MAX_HP,
-      damage: totalDamage,
-      combo: this.combo,
+      damage: amount,
+      combo: 1, // Doesn't apply here for obstacles
     });
 
     if (this.gunnerHP <= 0) {
